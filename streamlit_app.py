@@ -273,21 +273,22 @@ def run_nb_tab() -> None:
     low_max = r2.number_input("Low max", min_value=0.1, value=1.0, step=0.1)
     high_min = r3.number_input("High min", min_value=0.0, value=40.0, step=0.5)
     high_max = r4.number_input("High max", min_value=0.1, value=50.0, step=0.5)
+    c4, c5 = st.columns(2)
+    share_wos_mode = c4.selectbox(
+        "Share WOS mode",
+        options=["after", "before"],
+        index=1,
+        help="after: choose by (alloc+1)/mean, before: choose by alloc/mean",
+    )
+    coef_error_abs = c5.number_input(
+        "Coeff error abs (0.1 +/- e)",
+        min_value=0.0,
+        value=0.0,
+        step=0.05,
+        format="%.3f",
+    )
 
     with st.expander("Advanced", expanded=False):
-        share_wos_mode = st.selectbox(
-            "Share WOS mode",
-            options=["after", "before"],
-            index=1,
-            help="after: choose by (alloc+1)/mean, before: choose by alloc/mean",
-        )
-        coef_error_abs = st.number_input(
-            "Coeff error abs (0.1 +/- e)",
-            min_value=0.0,
-            value=0.0,
-            step=0.05,
-            format="%.3f",
-        )
         d1, d2 = st.columns(2)
         eval_trials = d1.number_input(
             "Evaluation trials",
