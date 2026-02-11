@@ -39,17 +39,38 @@ class Significance:
     significant: bool
 
 
-def proportional_integer_allocation(total_units: int, weights: np.ndarray) -> np.ndarray:
+def proportional_integer_allocation(
+    total_units: int,
+    weights: np.ndarray,
+    min_per_store: int = 1,
+) -> np.ndarray:
+    n_stores = int(weights.size)
+    base_required = n_stores * min_per_store
+    if total_units < base_required:
+        raise ValueError(
+            f"Total allocation ({total_units}) must be >= stores*min_per_store ({base_required})."
+        )
+
     weight_sum = float(weights.sum())
-    if total_units <= 0 or weight_sum <= 0:
+    if total_units <= 0:
         return np.zeros_like(weights, dtype=int)
 
-    raw = total_units * (weights / weight_sum)
-    alloc = np.floor(raw).astype(int)
-    remainder = total_units - int(alloc.sum())
+    alloc = np.full(n_stores, min_per_store, dtype=int)
+    remaining = total_units - base_required
+    if remaining == 0:
+        return alloc
+
+    if weight_sum <= 0:
+        alloc[:remaining] += 1
+        return alloc
+
+    raw = remaining * (weights / weight_sum)
+    extra = np.floor(raw).astype(int)
+    remainder = remaining - int(extra.sum())
+    alloc += extra
 
     if remainder > 0:
-        frac = raw - alloc
+        frac = raw - extra
         idx = np.argsort(-frac)[:remainder]
         alloc[idx] += 1
 
@@ -97,9 +118,19 @@ def sample_nb_demands(
 def optimize_volatility_aware(
     opt_demands: np.ndarray,
     total_units: int,
+    min_per_store: int = 1,
 ) -> np.ndarray:
     n_trials, n_stores = opt_demands.shape
-    alloc = np.zeros(n_stores, dtype=np.int32)
+    base_required = n_stores * min_per_store
+    if total_units < base_required:
+        raise ValueError(
+            f"Total allocation ({total_units}) must be >= stores*min_per_store ({base_required})."
+        )
+
+    alloc = np.full(n_stores, min_per_store, dtype=np.int32)
+    remaining = total_units - base_required
+    if remaining == 0:
+        return alloc
 
     # tails[i, k] estimates P(D_i >= k+1), for k = 0..total_units-1
     tails = np.zeros((n_stores, total_units), dtype=np.float64)
@@ -110,7 +141,7 @@ def optimize_volatility_aware(
         cc = np.cumsum(counts[::-1])[::-1]
         tails[i, :] = cc[1:] / n_trials
 
-    for _ in range(total_units):
+    for _ in range(remaining):
         marginal = np.where(alloc < total_units, tails[np.arange(n_stores), alloc], -1.0)
         best_store = int(np.argmax(marginal))
         alloc[best_store] += 1
@@ -193,7 +224,7 @@ def main() -> None:
     total_mean = float(means.sum())
     total_units = int(round(total_mean * args.total_factor))
 
-    alloc_mean = proportional_integer_allocation(total_units, means)
+    alloc_mean = proportional_integer_allocation(total_units, means, min_per_store=1)
 
     opt_demands = sample_nb_demands(
         means=means,
@@ -201,7 +232,7 @@ def main() -> None:
         trials=args.opt_trials,
         seed=args.seed + 100,
     )
-    alloc_vol = optimize_volatility_aware(opt_demands, total_units)
+    alloc_vol = optimize_volatility_aware(opt_demands, total_units, min_per_store=1)
 
     eval_demands = sample_nb_demands(
         means=means,
@@ -227,6 +258,7 @@ def main() -> None:
     print("VMR rule:                 max(1, 0.9 * mean^0.9)")
     print(f"Total expected demand:    {total_mean:.2f}")
     print(f"Total allocation budget:  {total_units}")
+    print("Minimum allocation/store: 1")
     print(f"Evaluation trials:        {args.eval_trials:,}")
     print()
 

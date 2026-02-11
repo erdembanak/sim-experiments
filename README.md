@@ -28,6 +28,7 @@ This project compares allocation policies under uncertain demand.
 - `mean_i ~ Uniform(0, 5)`.
 - `VMR_i = max(1, 0.9 * mean_i^0.9)`.
 - If `VMR = 1`, demand uses Poisson limit.
+- Allocation constraint: each store gets at least `1` unit.
 
 ## Statistical significance of sold gain
 
@@ -63,3 +64,5 @@ Negative binomial model:
 ```bash
 .venv/bin/python negative_binomial_100_stores.py
 ```
+
+Note: for the negative binomial model, total allocation must be at least number of stores due to the minimum `1` unit/store rule.

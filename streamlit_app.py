@@ -288,8 +288,14 @@ def run_nb_tab() -> None:
 
     total_mean = float(means.sum())
     total_units = int(round(total_mean * float(total_factor)))
+    if total_units < int(stores):
+        st.error(
+            "Total allocation is below the minimum required to give each store at least 1 unit. "
+            f"Required: {int(stores)}, got: {total_units}. Increase total factor or mean range."
+        )
+        return
 
-    alloc_mean = proportional_integer_allocation(total_units, means)
+    alloc_mean = proportional_integer_allocation(total_units, means, min_per_store=1)
 
     opt_demands = sample_nb_demands(
         means=means,
@@ -297,7 +303,7 @@ def run_nb_tab() -> None:
         trials=int(opt_trials),
         seed=int(seed) + 100,
     )
-    alloc_vol = optimize_volatility_aware(opt_demands, total_units)
+    alloc_vol = optimize_volatility_aware(opt_demands, total_units, min_per_store=1)
 
     eval_demands = sample_nb_demands(
         means=means,
@@ -339,6 +345,7 @@ def run_nb_tab() -> None:
             "VMR Rule": "max(1, 0.9 * mean^0.9)",
             "Total Expected Demand": round(total_mean, 3),
             "Total Allocation": total_units,
+            "Minimum Allocation/Store": 1,
         }
     )
 
