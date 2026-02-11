@@ -127,8 +127,8 @@ def sample_realized_coeff(
     coef_error_abs: float,
 ) -> np.ndarray:
     rng = np.random.default_rng(seed)
-    signs = rng.choice(np.array([-1.0, 1.0]), size=n_stores)
-    return np.maximum(0.0, 0.1 + signs * coef_error_abs)
+    error = rng.uniform(-1.0, 1.0, size=n_stores)
+    return np.maximum(0.0, 0.1 + error * coef_error_abs)
 
 
 def sample_nb_demands(
@@ -346,7 +346,10 @@ def parse_args() -> argparse.Namespace:
         "--coef-error-abs",
         type=float,
         default=0.0,
-        help="Absolute error added/subtracted to 0.1 in VMR coefficient (0.1 +/- e).",
+        help=(
+            "Amplitude e for realized coeff: coeff=max(0, 0.1 + e*u), "
+            "u~Uniform(-1,1)."
+        ),
     )
     return parser.parse_args()
 
@@ -425,7 +428,10 @@ def main() -> None:
     )
     print("Planning VMR rule:        1 + 0.1 * mean")
     print("Realized VMR rule:        1 + coeff * mean")
-    print(f"Realized coeff rule:      coeff = 0.1 +/- {args.coef_error_abs}")
+    print(
+        "Realized coeff rule:      "
+        f"coeff = max(0, 0.1 + {args.coef_error_abs}*u), u~U(-1,1)"
+    )
     print(
         "Realized coeff range:     "
         f"[{coeff_realized.min():.3f}, {coeff_realized.max():.3f}]"

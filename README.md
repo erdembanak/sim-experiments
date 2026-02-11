@@ -29,7 +29,7 @@ This project compares allocation policies under uncertain demand.
   - `bimodal`: low segment + high segment, each uniform with configurable ranges and share
     (default low `[0,1]`, high `[40,50]`, share `0.5`)
 - Planning: `VMR_i = 1 + 0.1 * mean_i` (no error).
-- Realized demand: `coeff_i = 0.1 +/- error_abs` (random sign), `VMR_i = 1 + coeff_i * mean_i`.
+- Realized demand: `coeff_i = max(0, 0.1 + error_abs * u_i)`, where `u_i ~ Uniform(-1, 1)`, and `VMR_i = 1 + coeff_i * mean_i`.
 - If `VMR = 1`, demand uses Poisson limit.
 - Allocation constraint: each store gets at least `1` unit.
 - Optional mean-share control: `mean_share_max_wos` (soft cap on `alloc/mean` in mean-share allocation).

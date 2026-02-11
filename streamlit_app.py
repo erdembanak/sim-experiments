@@ -259,7 +259,7 @@ def run_normal_tab() -> None:
 def run_nb_tab() -> None:
     st.subheader("100-Store Negative Binomial")
     st.caption(
-        "Planning uses fixed coeff=0.1. Realized demand uses coeff = 0.1 +/- error_abs."
+        "Planning uses fixed coeff=0.1. Realized uses coeff = max(0, 0.1 + error_abs*u), u~U(-1,1)."
     )
 
     st.markdown("**Core Inputs**")
@@ -281,7 +281,7 @@ def run_nb_tab() -> None:
         help="after: choose by (alloc+1)/mean, before: choose by alloc/mean",
     )
     coef_error_abs = c5.number_input(
-        "Coeff error abs (0.1 +/- e)",
+        "Coeff error abs (u~U(-1,1))",
         min_value=0.0,
         value=0.0,
         step=0.05,
@@ -399,7 +399,7 @@ def run_nb_tab() -> None:
             "Bimodal High Segment": {"Range": [float(high_min), float(high_max)]},
             "Planning VMR": "1 + 0.1 * mean",
             "Realized VMR": "1 + coeff * mean",
-            "Realized Coeff Rule": f"0.1 +/- {float(coef_error_abs):.3f}",
+            "Realized Coeff Rule": f"max(0, 0.1 + {float(coef_error_abs):.3f}*u), u~U(-1,1)",
             "Realized Coeff Range": [
                 round(float(coeff_realized.min()), 4),
                 round(float(coeff_realized.max()), 4),
@@ -453,6 +453,25 @@ def run_nb_tab() -> None:
     ]
     st.markdown("**Top 10 stores by allocation difference**")
     st.dataframe(top_rows, use_container_width=True)
+
+    low_group_idx = np.where(means <= float(low_max))[0]
+    if low_group_idx.size > 0:
+        low_sorted = low_group_idx[np.argsort(np.abs(diffs[low_group_idx]))[::-1][:10]]
+        low_rows = [
+            {
+                "Store": int(i),
+                "Mean": round(float(means[i]), 4),
+                "Realized Demand": round(float(realized_demand_store[i]), 4),
+                "Realized Coeff": round(float(coeff_realized[i]), 4),
+                "Realized VMR": round(float(vmr_realized[i]), 4),
+                "Mean Alloc": int(alloc_mean[i]),
+                "Vol Alloc": int(alloc_vol[i]),
+                "Diff": int(diffs[i]),
+            }
+            for i in low_sorted
+        ]
+        st.markdown("**Top 10 low-group stores by allocation difference**")
+        st.dataframe(low_rows, use_container_width=True)
 
     bin_rows = summarize_by_mean_bins(
         means=means,
