@@ -262,49 +262,43 @@ def run_nb_tab() -> None:
         "Planning uses fixed coeff=0.1. Realized demand uses coeff = 0.1 +/- error_abs."
     )
 
-    with st.form("nb_form"):
-        st.markdown("**Core Inputs**")
-        c1, c2, c3 = st.columns(3)
-        stores = c1.number_input("Stores", min_value=1, value=100, step=1)
-        low_share = c2.number_input("Low-share", min_value=0.0, max_value=1.0, value=0.90, step=0.05)
-        total_factor = c3.number_input("Total factor", min_value=0.1, value=0.9, step=0.05)
+    st.markdown("**Core Inputs**")
+    c1, c2, c3 = st.columns(3)
+    stores = c1.number_input("Stores", min_value=1, value=100, step=1)
+    low_share = c2.number_input("Low-share", min_value=0.0, max_value=1.0, value=0.90, step=0.05)
+    total_factor = c3.number_input("Total factor", min_value=0.1, value=2.1, step=0.05)
 
-        r1, r2, r3, r4 = st.columns(4)
-        low_min = r1.number_input("Low min", min_value=0.0, value=0.0, step=0.1)
-        low_max = r2.number_input("Low max", min_value=0.1, value=1.0, step=0.1)
-        high_min = r3.number_input("High min", min_value=0.0, value=40.0, step=0.5)
-        high_max = r4.number_input("High max", min_value=0.1, value=50.0, step=0.5)
-        run_top = st.form_submit_button("Run NB Simulation", type="primary", key="nb_run_top")
+    r1, r2, r3, r4 = st.columns(4)
+    low_min = r1.number_input("Low min", min_value=0.0, value=0.0, step=0.1)
+    low_max = r2.number_input("Low max", min_value=0.1, value=1.0, step=0.1)
+    high_min = r3.number_input("High min", min_value=0.0, value=40.0, step=0.5)
+    high_max = r4.number_input("High max", min_value=0.1, value=50.0, step=0.5)
 
-        with st.expander("Advanced", expanded=False):
-            share_wos_mode = st.selectbox(
-                "Share WOS mode",
-                options=["after", "before"],
-                help="after: choose by (alloc+1)/mean, before: choose by alloc/mean",
-            )
-            coef_error_abs = st.number_input(
-                "Coeff error abs (0.1 +/- e)",
-                min_value=0.0,
-                value=0.0,
-                step=0.05,
-                format="%.3f",
-            )
-            d1, d2, d3 = st.columns(3)
-            eval_trials = d1.number_input(
-                "Evaluation trials",
-                min_value=1000,
-                value=120_000,
-                step=1000,
-                key="nb_eval",
-            )
-            seed = d2.number_input("Seed", min_value=0, value=7, step=1, key="nb_seed")
-
-        run_bottom = st.form_submit_button(
-            "Run NB Simulation",
-            type="secondary",
-            key="nb_run_bottom",
+    with st.expander("Advanced", expanded=False):
+        share_wos_mode = st.selectbox(
+            "Share WOS mode",
+            options=["after", "before"],
+            index=1,
+            help="after: choose by (alloc+1)/mean, before: choose by alloc/mean",
         )
-        run_clicked = run_top or run_bottom
+        coef_error_abs = st.number_input(
+            "Coeff error abs (0.1 +/- e)",
+            min_value=0.0,
+            value=0.0,
+            step=0.05,
+            format="%.3f",
+        )
+        d1, d2 = st.columns(2)
+        eval_trials = d1.number_input(
+            "Evaluation trials",
+            min_value=1000,
+            value=120_000,
+            step=1000,
+            key="nb_eval",
+        )
+        seed = d2.number_input("Seed", min_value=0, value=7, step=1, key="nb_seed")
+
+    run_clicked = st.button("Run NB Simulation", type="primary", key="nb_run")
 
     if not run_clicked:
         st.info("Set parameters and click 'Run NB Simulation'.")
@@ -326,10 +320,11 @@ def run_nb_tab() -> None:
         high_min=float(high_min),
         high_max=float(high_max),
     )
+    run_seed = int(seed)
     coeff_plan = np.full(int(stores), 0.1, dtype=float)
     coeff_realized = sample_realized_coeff(
         n_stores=int(stores),
-        seed=int(seed) + 1,
+        seed=run_seed + 1,
         coef_error_abs=float(coef_error_abs),
     )
     vmr_plan = build_vmr(means, coeff_plan)
@@ -362,7 +357,7 @@ def run_nb_tab() -> None:
         means=means,
         vmr=vmr_realized,
         trials=int(eval_trials),
-        seed=int(seed) + 200,
+        seed=run_seed + 200,
     )
 
     metrics_mean = evaluate_nb(eval_demands, alloc_mean)
@@ -412,6 +407,7 @@ def run_nb_tab() -> None:
             "Total Allocation": total_units,
             "Minimum Allocation/Store": 1,
             "Share WOS Mode": str(share_wos_mode),
+            "Run Seed": run_seed,
         }
     )
 

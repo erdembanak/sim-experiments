@@ -44,7 +44,7 @@ def proportional_integer_allocation(
     weights: np.ndarray,
     min_per_store: int = 1,
     max_wos: float | None = None,
-    share_wos_mode: str = "after",
+    share_wos_mode: str = "before",
 ) -> np.ndarray:
     n_stores = int(weights.size)
     base_required = n_stores * min_per_store
@@ -338,7 +338,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--share-wos-mode",
         type=str,
-        default="after",
+        default="before",
         choices=["before", "after"],
         help="Use WOS before or after hypothetical +1 when choosing next unit.",
     )
