@@ -266,14 +266,15 @@ def run_nb_tab() -> None:
         st.markdown("**Core Inputs**")
         c1, c2, c3 = st.columns(3)
         stores = c1.number_input("Stores", min_value=1, value=100, step=1)
-        low_share = c2.number_input("Low-share", min_value=0.90, max_value=1.0, value=0.5, step=0.05)
-        total_factor = c3.number_input("Total factor", min_value=0.1, value=2.1, step=0.05)
+        low_share = c2.number_input("Low-share", min_value=0.0, max_value=1.0, value=0.90, step=0.05)
+        total_factor = c3.number_input("Total factor", min_value=0.1, value=0.9, step=0.05)
 
         r1, r2, r3, r4 = st.columns(4)
-        low_min = r1.number_input("Low min", min_value=0.5, value=0.0, step=0.1)
-        low_max = r2.number_input("Low max", min_value=1, value=1.0, step=0.1)
-        high_min = r3.number_input("High min", min_value=40, value=40.0, step=0.5)
-        high_max = r4.number_input("High max", min_value=50, value=50.0, step=0.5)
+        low_min = r1.number_input("Low min", min_value=0.0, value=0.0, step=0.1)
+        low_max = r2.number_input("Low max", min_value=0.1, value=1.0, step=0.1)
+        high_min = r3.number_input("High min", min_value=0.0, value=40.0, step=0.5)
+        high_max = r4.number_input("High max", min_value=0.1, value=50.0, step=0.5)
+        run_top = st.form_submit_button("Run NB Simulation", type="primary", key="nb_run_top")
 
         with st.expander("Advanced", expanded=False):
             share_wos_mode = st.selectbox(
@@ -296,16 +297,14 @@ def run_nb_tab() -> None:
                 step=1000,
                 key="nb_eval",
             )
-            opt_trials = d2.number_input(
-                "Optimization trials",
-                min_value=1000,
-                value=40_000,
-                step=1000,
-                key="nb_opt",
-            )
-            seed = d3.number_input("Seed", min_value=0, value=7, step=1, key="nb_seed")
+            seed = d2.number_input("Seed", min_value=0, value=7, step=1, key="nb_seed")
 
-        run_clicked = st.form_submit_button("Run NB Simulation", type="primary")
+        run_bottom = st.form_submit_button(
+            "Run NB Simulation",
+            type="secondary",
+            key="nb_run_bottom",
+        )
+        run_clicked = run_top or run_bottom
 
     if not run_clicked:
         st.info("Set parameters and click 'Run NB Simulation'.")
@@ -352,13 +351,12 @@ def run_nb_tab() -> None:
         share_wos_mode=str(share_wos_mode),
     )
 
-    opt_demands = sample_nb_demands(
+    alloc_vol = optimize_volatility_aware(
         means=means,
         vmr=vmr_plan,
-        trials=int(opt_trials),
-        seed=int(seed) + 100,
+        total_units=total_units,
+        min_per_store=1,
     )
-    alloc_vol = optimize_volatility_aware(opt_demands, total_units, min_per_store=1)
 
     eval_demands = sample_nb_demands(
         means=means,

@@ -14,7 +14,7 @@ This project compares allocation policies under uncertain demand.
 ## Policies compared
 
 - **Mean-share**: allocate proportional to expected means.
-- **Volatility-aware**: optimize allocation using simulated demand paths and marginal expected sell.
+- **Volatility-aware**: optimize allocation using model-based marginal expected sell.
 
 ## Demand assumptions
 

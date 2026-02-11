@@ -7,7 +7,7 @@ Demand generation:
 
 Policies compared:
 1) Mean-share allocation (proportional to means)
-2) Volatility-aware allocation (greedy by empirical marginal sell probability)
+2) Volatility-aware allocation (greedy by model-based marginal expected sales)
 """
 
 from __future__ import annotations
@@ -157,12 +157,48 @@ def sample_nb_demands(
     return demands
 
 
+def _tail_probs_poisson(mu: float, max_k: int) -> np.ndarray:
+    tail = np.zeros(max_k, dtype=float)
+    pmf = math.exp(-mu)
+    cdf = pmf
+    for k in range(max_k):
+        tail[k] = max(0.0, 1.0 - cdf)
+        # next pmf for k+1
+        pmf = pmf * mu / (k + 1)
+        cdf += pmf
+    return np.clip(tail, 0.0, 1.0)
+
+
+def _tail_probs_nb(mu: float, vmr: float, max_k: int) -> np.ndarray:
+    tail = np.zeros(max_k, dtype=float)
+    if mu <= 0:
+        return tail
+    if vmr <= 1.0 + 1e-12:
+        return _tail_probs_poisson(mu, max_k)
+
+    # For NB(r, p): mean = r(1-p)/p and VMR = 1 + mean/r.
+    r = mu / (vmr - 1.0)
+    p = r / (r + mu)
+    q = 1.0 - p
+
+    pmf = p**r  # P(X=0)
+    cdf = pmf
+    for k in range(max_k):
+        tail[k] = max(0.0, 1.0 - cdf)
+        # recurrence: P(X=k+1) = P(X=k) * ((k+r)/(k+1)) * q
+        pmf = pmf * ((k + r) / (k + 1)) * q
+        cdf += pmf
+
+    return np.clip(tail, 0.0, 1.0)
+
+
 def optimize_volatility_aware(
-    opt_demands: np.ndarray,
+    means: np.ndarray,
+    vmr: np.ndarray,
     total_units: int,
     min_per_store: int = 1,
 ) -> np.ndarray:
-    n_trials, n_stores = opt_demands.shape
+    n_stores = int(means.size)
     base_required = n_stores * min_per_store
     if total_units < base_required:
         raise ValueError(
@@ -174,14 +210,10 @@ def optimize_volatility_aware(
     if remaining == 0:
         return alloc
 
-    # tails[i, k] estimates P(D_i >= k+1), for k = 0..total_units-1
+    # tails[i, k] is exact (model-based) P(D_i >= k+1), for k = 0..total_units-1.
     tails = np.zeros((n_stores, total_units), dtype=np.float64)
-
     for i in range(n_stores):
-        clipped = np.clip(opt_demands[:, i], 0, total_units)
-        counts = np.bincount(clipped, minlength=total_units + 1)
-        cc = np.cumsum(counts[::-1])[::-1]
-        tails[i, :] = cc[1:] / n_trials
+        tails[i, :] = _tail_probs_nb(float(means[i]), float(vmr[i]), total_units)
 
     for _ in range(remaining):
         marginal = np.where(alloc < total_units, tails[np.arange(n_stores), alloc], -1.0)
@@ -296,7 +328,6 @@ def parse_args() -> argparse.Namespace:
         help="Total inventory = round(total mean demand * total-factor)",
     )
     parser.add_argument("--eval-trials", type=int, default=120_000)
-    parser.add_argument("--opt-trials", type=int, default=40_000)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
         "--mean-share-max-wos",
@@ -354,15 +385,10 @@ def main() -> None:
         share_wos_mode=args.share_wos_mode,
     )
 
-    opt_demands = sample_nb_demands(
+    alloc_vol = optimize_volatility_aware(
         means=means,
         vmr=vmr_plan,
-        trials=args.opt_trials,
-        seed=args.seed + 100,
-    )
-    alloc_vol = optimize_volatility_aware(
-        opt_demands,
-        total_units,
+        total_units=total_units,
         min_per_store=1,
     )
 
