@@ -11,11 +11,14 @@ import numpy as np
 import streamlit as st
 
 from negative_binomial_100_stores import (
+    build_vmr,
     evaluate as evaluate_nb,
-    generate_store_params,
+    generate_store_means,
     optimize_volatility_aware,
     proportional_integer_allocation,
+    sample_realized_coeff,
     sample_nb_demands,
+    summarize_by_mean_bins,
 )
 from probability_test import NormalDemand, generate_demands, parse_float_list, run_scenario
 
@@ -255,19 +258,52 @@ def run_normal_tab() -> None:
 
 def run_nb_tab() -> None:
     st.subheader("100-Store Negative Binomial")
-    st.caption("VMR is fixed to: max(1, 0.9 * mean^0.9)")
+    st.caption(
+        "Planning uses fixed coeff=0.1. Realized demand uses coeff = 0.1 +/- error_abs."
+    )
 
     with st.form("nb_form"):
-        c1, c2, c3, c4 = st.columns(4)
+        st.markdown("**Core Inputs**")
+        c1, c2, c3 = st.columns(3)
         stores = c1.number_input("Stores", min_value=1, value=100, step=1)
-        mean_low = c2.number_input("Mean low", min_value=0.0, value=0.0, step=0.1)
-        mean_high = c3.number_input("Mean high", min_value=0.1, value=5.0, step=0.1)
-        total_factor = c4.number_input("Total factor", min_value=0.1, value=0.9, step=0.05)
+        low_share = c2.number_input("Low-share", min_value=0.90, max_value=1.0, value=0.5, step=0.05)
+        total_factor = c3.number_input("Total factor", min_value=0.1, value=2.1, step=0.05)
 
-        d1, d2, d3 = st.columns(3)
-        eval_trials = d1.number_input("Evaluation trials", min_value=1000, value=120_000, step=1000, key="nb_eval")
-        opt_trials = d2.number_input("Optimization trials", min_value=1000, value=40_000, step=1000, key="nb_opt")
-        seed = d3.number_input("Seed", min_value=0, value=7, step=1, key="nb_seed")
+        r1, r2, r3, r4 = st.columns(4)
+        low_min = r1.number_input("Low min", min_value=0.5, value=0.0, step=0.1)
+        low_max = r2.number_input("Low max", min_value=1, value=1.0, step=0.1)
+        high_min = r3.number_input("High min", min_value=40, value=40.0, step=0.5)
+        high_max = r4.number_input("High max", min_value=50, value=50.0, step=0.5)
+
+        with st.expander("Advanced", expanded=False):
+            share_wos_mode = st.selectbox(
+                "Share WOS mode",
+                options=["after", "before"],
+                help="after: choose by (alloc+1)/mean, before: choose by alloc/mean",
+            )
+            coef_error_abs = st.number_input(
+                "Coeff error abs (0.1 +/- e)",
+                min_value=0.0,
+                value=0.0,
+                step=0.05,
+                format="%.3f",
+            )
+            d1, d2, d3 = st.columns(3)
+            eval_trials = d1.number_input(
+                "Evaluation trials",
+                min_value=1000,
+                value=120_000,
+                step=1000,
+                key="nb_eval",
+            )
+            opt_trials = d2.number_input(
+                "Optimization trials",
+                min_value=1000,
+                value=40_000,
+                step=1000,
+                key="nb_opt",
+            )
+            seed = d3.number_input("Seed", min_value=0, value=7, step=1, key="nb_seed")
 
         run_clicked = st.form_submit_button("Run NB Simulation", type="primary")
 
@@ -275,16 +311,30 @@ def run_nb_tab() -> None:
         st.info("Set parameters and click 'Run NB Simulation'.")
         return
 
-    if mean_high <= mean_low:
-        st.error("`mean_high` must be greater than `mean_low`.")
+    if low_max <= low_min:
+        st.error("`low_max` must be greater than `low_min`.")
+        return
+    if high_max <= high_min:
+        st.error("`high_max` must be greater than `high_min`.")
         return
 
-    means, vmr = generate_store_params(
+    means = generate_store_means(
         n_stores=int(stores),
-        mean_low=float(mean_low),
-        mean_high=float(mean_high),
         seed=int(seed),
+        low_share=float(low_share),
+        low_min=float(low_min),
+        low_max=float(low_max),
+        high_min=float(high_min),
+        high_max=float(high_max),
     )
+    coeff_plan = np.full(int(stores), 0.1, dtype=float)
+    coeff_realized = sample_realized_coeff(
+        n_stores=int(stores),
+        seed=int(seed) + 1,
+        coef_error_abs=float(coef_error_abs),
+    )
+    vmr_plan = build_vmr(means, coeff_plan)
+    vmr_realized = build_vmr(means, coeff_realized)
 
     total_mean = float(means.sum())
     total_units = int(round(total_mean * float(total_factor)))
@@ -295,11 +345,16 @@ def run_nb_tab() -> None:
         )
         return
 
-    alloc_mean = proportional_integer_allocation(total_units, means, min_per_store=1)
+    alloc_mean = proportional_integer_allocation(
+        total_units,
+        means,
+        min_per_store=1,
+        share_wos_mode=str(share_wos_mode),
+    )
 
     opt_demands = sample_nb_demands(
         means=means,
-        vmr=vmr,
+        vmr=vmr_plan,
         trials=int(opt_trials),
         seed=int(seed) + 100,
     )
@@ -307,7 +362,7 @@ def run_nb_tab() -> None:
 
     eval_demands = sample_nb_demands(
         means=means,
-        vmr=vmr,
+        vmr=vmr_realized,
         trials=int(eval_trials),
         seed=int(seed) + 200,
     )
@@ -316,13 +371,15 @@ def run_nb_tab() -> None:
     metrics_vol = evaluate_nb(eval_demands, alloc_vol)
 
     sold_gain = metrics_vol.avg_sold - metrics_mean.avg_sold
+    sold_gain_pct = 100.0 * sold_gain / metrics_mean.avg_sold if metrics_mean.avg_sold > 0 else 0.0
     lost_reduction = metrics_mean.avg_lost - metrics_vol.avg_lost
     fill_gain_pp = 100.0 * (metrics_vol.fill_rate - metrics_mean.fill_rate)
 
-    k1, k2, k3 = st.columns(3)
+    k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sold Gain (Vol - Mean)", f"{sold_gain:.3f}")
-    k2.metric("Lost Reduction", f"{lost_reduction:.3f}")
-    k3.metric("Fill Gain (pp)", f"{fill_gain_pp:.3f}")
+    k2.metric("Sold Gain %", f"{sold_gain_pct:.3f}%")
+    k3.metric("Lost Reduction", f"{lost_reduction:.3f}")
+    k4.metric("Fill Gain (pp)", f"{fill_gain_pp:.3f}")
 
     sold_mean_daily = np.minimum(eval_demands, alloc_mean).sum(axis=1)
     sold_vol_daily = np.minimum(eval_demands, alloc_vol).sum(axis=1)
@@ -341,11 +398,22 @@ def run_nb_tab() -> None:
     st.write(
         {
             "Stores": int(stores),
-            "Mean Range": [float(mean_low), float(mean_high)],
-            "VMR Rule": "max(1, 0.9 * mean^0.9)",
+            "Bimodal Low Segment": {
+                "Share": float(low_share),
+                "Range": [float(low_min), float(low_max)],
+            },
+            "Bimodal High Segment": {"Range": [float(high_min), float(high_max)]},
+            "Planning VMR": "1 + 0.1 * mean",
+            "Realized VMR": "1 + coeff * mean",
+            "Realized Coeff Rule": f"0.1 +/- {float(coef_error_abs):.3f}",
+            "Realized Coeff Range": [
+                round(float(coeff_realized.min()), 4),
+                round(float(coeff_realized.max()), 4),
+            ],
             "Total Expected Demand": round(total_mean, 3),
             "Total Allocation": total_units,
             "Minimum Allocation/Store": 1,
+            "Share WOS Mode": str(share_wos_mode),
         }
     )
 
@@ -369,13 +437,19 @@ def run_nb_tab() -> None:
     ]
     st.dataframe(policy_rows, use_container_width=True)
 
+    realized_demand_store = eval_demands.mean(axis=0)
+    sold_mean_store = np.minimum(eval_demands, alloc_mean).mean(axis=0)
+    sold_vol_store = np.minimum(eval_demands, alloc_vol).mean(axis=0)
+
     diffs = alloc_vol - alloc_mean
     idx_sorted = np.argsort(np.abs(diffs))[::-1][:10]
     top_rows = [
         {
             "Store": int(i),
             "Mean": round(float(means[i]), 4),
-            "VMR": round(float(vmr[i]), 4),
+            "Realized Demand": round(float(realized_demand_store[i]), 4),
+            "Realized Coeff": round(float(coeff_realized[i]), 4),
+            "Realized VMR": round(float(vmr_realized[i]), 4),
             "Mean Alloc": int(alloc_mean[i]),
             "Vol Alloc": int(alloc_vol[i]),
             "Diff": int(diffs[i]),
@@ -384,6 +458,30 @@ def run_nb_tab() -> None:
     ]
     st.markdown("**Top 10 stores by allocation difference**")
     st.dataframe(top_rows, use_container_width=True)
+
+    bin_rows = summarize_by_mean_bins(
+        means=means,
+        realized_demand=realized_demand_store,
+        alloc_mean=alloc_mean,
+        alloc_vol=alloc_vol,
+        sold_mean_store=sold_mean_store,
+        sold_vol_store=sold_vol_store,
+    )
+    bin_rows_fmt = [
+        {
+            "Bin": row["bin"],
+            "Stores": row["stores"],
+            "Avg Mean": round(row["avg_mean"], 4),
+            "Avg Realized Demand": round(row["avg_realized_demand"], 4),
+            "Mean Alloc Total": row["alloc_mean_total"],
+            "Vol Alloc Total": row["alloc_vol_total"],
+            "Sold Gain": round(row["sold_gain"], 4),
+            "Sold Gain %": round(row["sold_gain_pct"], 4),
+        }
+        for row in bin_rows
+    ]
+    st.markdown("**Summary by mean bins**")
+    st.dataframe(bin_rows_fmt, use_container_width=True)
 
 
 tab_readme, tab_normal, tab_nb = st.tabs(

@@ -2,8 +2,8 @@
 """100-store allocation simulation under Negative Binomial demand.
 
 Demand generation:
-- mean_i ~ Uniform(0, 5)
-- VMR_i = max(1, 0.9 * mean_i^0.9)
+- store means from bimodal profile (low segment + high segment)
+- VMR_i = 1 + coeff * mean_i
 
 Policies compared:
 1) Mean-share allocation (proportional to means)
@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass
-from typing import Tuple
+from typing import List, Tuple
 
 import numpy as np
 
@@ -43,6 +43,8 @@ def proportional_integer_allocation(
     total_units: int,
     weights: np.ndarray,
     min_per_store: int = 1,
+    max_wos: float | None = None,
+    share_wos_mode: str = "after",
 ) -> np.ndarray:
     n_stores = int(weights.size)
     base_required = n_stores * min_per_store
@@ -51,42 +53,82 @@ def proportional_integer_allocation(
             f"Total allocation ({total_units}) must be >= stores*min_per_store ({base_required})."
         )
 
-    weight_sum = float(weights.sum())
     if total_units <= 0:
         return np.zeros_like(weights, dtype=int)
 
+    if base_required == total_units:
+        return np.full(n_stores, min_per_store, dtype=int)
+
     alloc = np.full(n_stores, min_per_store, dtype=int)
     remaining = total_units - base_required
-    if remaining == 0:
-        return alloc
+    eps = 1e-12
+    if share_wos_mode not in {"before", "after"}:
+        raise ValueError("share_wos_mode must be 'before' or 'after'.")
+    cap_units: np.ndarray | None = None
+    if max_wos is not None and max_wos > 0:
+        cap_units = np.maximum(min_per_store, np.ceil(weights * max_wos).astype(int))
 
-    if weight_sum <= 0:
-        alloc[:remaining] += 1
-        return alloc
-
-    raw = remaining * (weights / weight_sum)
-    extra = np.floor(raw).astype(int)
-    remainder = remaining - int(extra.sum())
-    alloc += extra
-
-    if remainder > 0:
-        frac = raw - extra
-        idx = np.argsort(-frac)[:remainder]
-        alloc[idx] += 1
+    # WOS-balancing rule: add each next unit to the store that would still
+    # have the lowest weeks-of-supply after receiving one more unit.
+    # WOS proxy here is alloc / forecast_mean.
+    for _ in range(remaining):
+        if share_wos_mode == "after":
+            ratio = np.where(weights > eps, (alloc + 1) / weights, np.inf)
+        else:
+            ratio = np.where(weights > eps, alloc / weights, np.inf)
+        candidates = np.arange(n_stores)
+        if cap_units is not None:
+            under_cap = np.where(alloc < cap_units)[0]
+            if under_cap.size > 0:
+                candidates = under_cap
+        k = int(candidates[np.argmin(ratio[candidates])])
+        if not np.isfinite(ratio[k]):
+            k = int(np.argmin(alloc))
+        alloc[k] += 1
 
     return alloc
 
 
-def generate_store_params(
+def generate_store_means(
     n_stores: int,
-    mean_low: float,
-    mean_high: float,
     seed: int,
-) -> Tuple[np.ndarray, np.ndarray]:
+    low_share: float = 0.5,
+    low_min: float = 0.0,
+    low_max: float = 1.0,
+    high_min: float = 40.0,
+    high_max: float = 50.0,
+) -> np.ndarray:
     rng = np.random.default_rng(seed)
-    means = rng.uniform(mean_low, mean_high, size=n_stores)
-    vmr = np.maximum(1.0, 0.9 * np.power(means, 0.9))
-    return means, vmr
+    if not (0.0 <= low_share <= 1.0):
+        raise ValueError("low_share must be in [0, 1].")
+    if low_max <= low_min:
+        raise ValueError("low_max must be > low_min.")
+    if high_max <= high_min:
+        raise ValueError("high_max must be > high_min.")
+
+    low_count = int(round(n_stores * low_share))
+    low_count = min(max(low_count, 0), n_stores)
+    high_count = n_stores - low_count
+
+    low_vals = rng.uniform(low_min, low_max, size=low_count)
+    high_vals = rng.uniform(high_min, high_max, size=high_count)
+    means = np.concatenate([low_vals, high_vals])
+    rng.shuffle(means)
+    return means
+
+
+def build_vmr(means: np.ndarray, coeff: np.ndarray) -> np.ndarray:
+    return 1.0 + coeff * means
+
+
+def sample_realized_coeff(
+    n_stores: int,
+    seed: int,
+    coef_error_abs: float,
+) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    signs = rng.choice(np.array([-1.0, 1.0]), size=n_stores)
+    return np.maximum(0.0, 0.1 + signs * coef_error_abs)
 
 
 def sample_nb_demands(
@@ -192,13 +234,61 @@ def paired_significance(sold_a: np.ndarray, sold_b: np.ndarray) -> Significance:
     return Significance(mean_diff, ci_low, ci_high, p_value, significant)
 
 
+def summarize_by_mean_bins(
+    means: np.ndarray,
+    realized_demand: np.ndarray,
+    alloc_mean: np.ndarray,
+    alloc_vol: np.ndarray,
+    sold_mean_store: np.ndarray,
+    sold_vol_store: np.ndarray,
+) -> List[dict]:
+    edges = np.array([0.0, 1.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0, np.inf])
+    labels = ["[0,1)", "[1,5)", "[5,10)", "[10,20)", "[20,30)", "[30,40)", "[40,50)", "[50,+)"]
+    idx = np.digitize(means, edges, right=False) - 1
+
+    rows: List[dict] = []
+    for i, label in enumerate(labels):
+        mask = idx == i
+        if not np.any(mask):
+            continue
+
+        sold_mean_total = float(sold_mean_store[mask].sum())
+        sold_vol_total = float(sold_vol_store[mask].sum())
+        sold_gain = sold_vol_total - sold_mean_total
+        sold_gain_pct = 100.0 * sold_gain / sold_mean_total if sold_mean_total > 0 else 0.0
+
+        rows.append(
+            {
+                "bin": label,
+                "stores": int(mask.sum()),
+                "avg_mean": float(means[mask].mean()),
+                "avg_realized_demand": float(realized_demand[mask].mean()),
+                "alloc_mean_total": int(alloc_mean[mask].sum()),
+                "alloc_vol_total": int(alloc_vol[mask].sum()),
+                "sold_mean_total": sold_mean_total,
+                "sold_vol_total": sold_vol_total,
+                "sold_gain": sold_gain,
+                "sold_gain_pct": sold_gain_pct,
+            }
+        )
+    return rows
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="100-store Negative Binomial allocation comparison",
     )
     parser.add_argument("--stores", type=int, default=100)
-    parser.add_argument("--mean-low", type=float, default=0.0)
-    parser.add_argument("--mean-high", type=float, default=5.0)
+    parser.add_argument(
+        "--low-share",
+        type=float,
+        default=0.5,
+        help="Share of stores in low-mean segment for bimodal profile.",
+    )
+    parser.add_argument("--low-min", type=float, default=0.0)
+    parser.add_argument("--low-max", type=float, default=1.0)
+    parser.add_argument("--high-min", type=float, default=40.0)
+    parser.add_argument("--high-max", type=float, default=50.0)
     parser.add_argument(
         "--total-factor",
         type=float,
@@ -208,35 +298,77 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-trials", type=int, default=120_000)
     parser.add_argument("--opt-trials", type=int, default=40_000)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument(
+        "--mean-share-max-wos",
+        type=float,
+        default=0.0,
+        help="Soft WOS cap for mean-share allocator (<=0 disables).",
+    )
+    parser.add_argument(
+        "--share-wos-mode",
+        type=str,
+        default="after",
+        choices=["before", "after"],
+        help="Use WOS before or after hypothetical +1 when choosing next unit.",
+    )
+    parser.add_argument(
+        "--coef-error-abs",
+        type=float,
+        default=0.0,
+        help="Absolute error added/subtracted to 0.1 in VMR coefficient (0.1 +/- e).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.coef_error_abs < 0:
+        raise ValueError("--coef-error-abs must be >= 0.")
 
-    means, vmr = generate_store_params(
+    means = generate_store_means(
         n_stores=args.stores,
-        mean_low=args.mean_low,
-        mean_high=args.mean_high,
         seed=args.seed,
+        low_share=args.low_share,
+        low_min=args.low_min,
+        low_max=args.low_max,
+        high_min=args.high_min,
+        high_max=args.high_max,
     )
+    coeff_plan = np.full(args.stores, 0.1, dtype=float)
+    coeff_realized = sample_realized_coeff(
+        n_stores=args.stores,
+        seed=args.seed + 1,
+        coef_error_abs=args.coef_error_abs,
+    )
+    vmr_plan = build_vmr(means, coeff_plan)
+    vmr_realized = build_vmr(means, coeff_realized)
 
     total_mean = float(means.sum())
     total_units = int(round(total_mean * args.total_factor))
 
-    alloc_mean = proportional_integer_allocation(total_units, means, min_per_store=1)
+    alloc_mean = proportional_integer_allocation(
+        total_units,
+        means,
+        min_per_store=1,
+        max_wos=(args.mean_share_max_wos if args.mean_share_max_wos > 0 else None),
+        share_wos_mode=args.share_wos_mode,
+    )
 
     opt_demands = sample_nb_demands(
         means=means,
-        vmr=vmr,
+        vmr=vmr_plan,
         trials=args.opt_trials,
         seed=args.seed + 100,
     )
-    alloc_vol = optimize_volatility_aware(opt_demands, total_units, min_per_store=1)
+    alloc_vol = optimize_volatility_aware(
+        opt_demands,
+        total_units,
+        min_per_store=1,
+    )
 
     eval_demands = sample_nb_demands(
         means=means,
-        vmr=vmr,
+        vmr=vmr_realized,
         trials=args.eval_trials,
         seed=args.seed + 200,
     )
@@ -245,20 +377,41 @@ def main() -> None:
     metrics_vol = evaluate(eval_demands, alloc_vol)
     sold_mean_daily = np.minimum(eval_demands, alloc_mean).sum(axis=1)
     sold_vol_daily = np.minimum(eval_demands, alloc_vol).sum(axis=1)
+    realized_demand_store = eval_demands.mean(axis=0)
+    sold_mean_store = np.minimum(eval_demands, alloc_mean).mean(axis=0)
+    sold_vol_store = np.minimum(eval_demands, alloc_vol).mean(axis=0)
     sig = paired_significance(sold_mean_daily, sold_vol_daily)
 
     sold_gain = metrics_vol.avg_sold - metrics_mean.avg_sold
+    sold_gain_pct = 100.0 * sold_gain / metrics_mean.avg_sold if metrics_mean.avg_sold > 0 else 0.0
     lost_reduction = metrics_mean.avg_lost - metrics_vol.avg_lost
     fill_gain_pp = 100.0 * (metrics_vol.fill_rate - metrics_mean.fill_rate)
 
     print("Negative Binomial Allocation Test (100 Stores)")
     print("=" * 88)
     print(f"Stores:                   {args.stores}")
-    print(f"Mean range:               [{args.mean_low}, {args.mean_high}]")
-    print("VMR rule:                 max(1, 0.9 * mean^0.9)")
+    low_count = int(round(args.stores * args.low_share))
+    high_count = args.stores - low_count
+    print(
+        "Bimodal segments:         "
+        f"low={low_count} in [{args.low_min}, {args.low_max}], "
+        f"high={high_count} in [{args.high_min}, {args.high_max}]"
+    )
+    print("Planning VMR rule:        1 + 0.1 * mean")
+    print("Realized VMR rule:        1 + coeff * mean")
+    print(f"Realized coeff rule:      coeff = 0.1 +/- {args.coef_error_abs}")
+    print(
+        "Realized coeff range:     "
+        f"[{coeff_realized.min():.3f}, {coeff_realized.max():.3f}]"
+    )
     print(f"Total expected demand:    {total_mean:.2f}")
     print(f"Total allocation budget:  {total_units}")
     print("Minimum allocation/store: 1")
+    if args.mean_share_max_wos > 0:
+        print(f"Mean-share max WOS:       {args.mean_share_max_wos} (soft cap)")
+    else:
+        print("Mean-share max WOS:       disabled")
+    print(f"Share WOS mode:           {args.share_wos_mode}")
     print(f"Evaluation trials:        {args.eval_trials:,}")
     print()
 
@@ -281,6 +434,7 @@ def main() -> None:
     print("\nComparison")
     print("-" * 88)
     print(f"Sold gain (vol - mean):   {sold_gain:.2f}")
+    print(f"Sold gain (%):            {sold_gain_pct:.2f}%")
     print(f"Lost reduction:           {lost_reduction:.2f}")
     print(f"Fill-rate gain:           {fill_gain_pp:.2f} pp")
     print("\nSignificance (paired by day)")
@@ -293,12 +447,33 @@ def main() -> None:
     top_diff_idx = np.argsort(np.abs(alloc_vol - alloc_mean))[::-1][:10]
     print("\nTop 10 stores by allocation difference (vol - mean)")
     print("-" * 88)
-    print(f"{'Store':>8}{'Mean':>10}{'VMR':>10}{'MeanAlloc':>12}{'VolAlloc':>10}{'Diff':>8}")
+    print(f"{'Store':>8}{'Mean':>10}{'RealDem':>10}{'Coeff':>10}{'VMR':>10}{'MeanAlloc':>10}{'VolAlloc':>10}{'Diff':>8}")
     for idx in top_diff_idx:
         diff = int(alloc_vol[idx] - alloc_mean[idx])
         print(
-            f"{idx:>8}{means[idx]:>10.3f}{vmr[idx]:>10.3f}{int(alloc_mean[idx]):>12}"
+            f"{idx:>8}{means[idx]:>10.3f}{realized_demand_store[idx]:>10.3f}{coeff_realized[idx]:>10.3f}{vmr_realized[idx]:>10.3f}"
+            f"{int(alloc_mean[idx]):>10}"
             f"{int(alloc_vol[idx]):>10}{diff:>8}"
+        )
+
+    bin_rows = summarize_by_mean_bins(
+        means=means,
+        realized_demand=realized_demand_store,
+        alloc_mean=alloc_mean,
+        alloc_vol=alloc_vol,
+        sold_mean_store=sold_mean_store,
+        sold_vol_store=sold_vol_store,
+    )
+    print("\nSummary by mean bins")
+    print("-" * 88)
+    print(
+        f"{'Bin':>8}{'Stores':>8}{'AvgMean':>10}{'AvgDem':>10}"
+        f"{'AllocM':>10}{'AllocV':>10}{'SoldGain':>10}{'Gain%':>9}"
+    )
+    for row in bin_rows:
+        print(
+            f"{row['bin']:>8}{row['stores']:>8}{row['avg_mean']:>10.2f}{row['avg_realized_demand']:>10.2f}"
+            f"{row['alloc_mean_total']:>10}{row['alloc_vol_total']:>10}{row['sold_gain']:>10.2f}{row['sold_gain_pct']:>8.2f}%"
         )
 
 
