@@ -383,37 +383,6 @@ def run_nb_tab() -> None:
     sold_vol_daily = np.minimum(eval_demands, alloc_vol).sum(axis=1)
     sig = paired_significance_from_daily_sold(sold_mean_daily, sold_vol_daily)
 
-    st.markdown("**Sold Gain Significance (paired by day)**")
-    st.write(
-        {
-            "Mean daily sold gain": round(sig["mean_diff"], 6),
-            "95% CI": [round(sig["ci_low"], 6), round(sig["ci_high"], 6)],
-            "p-value": round(sig["p_value"], 10),
-            "Significant at 5%": bool(sig["significant"]),
-        }
-    )
-
-    st.write(
-        {
-            "Stores": int(stores),
-            "Mean Generation": "Pareto",
-            "Pareto alpha": float(pareto_alpha),
-            "Mean range clip": [float(mean_min), float(mean_max)],
-            "Planning VMR": "1 + 0.1 * mean",
-            "Realized VMR": "1 + coeff * mean",
-            "Realized Coeff Rule": f"max(0, 0.1 + {float(coef_error_abs):.3f}*u), u~U(-1,1)",
-            "Realized Coeff Range": [
-                round(float(coeff_realized.min()), 4),
-                round(float(coeff_realized.max()), 4),
-            ],
-            "Total Expected Demand": round(total_mean, 3),
-            "Total Allocation": total_units,
-            "Minimum Allocation/Store": 1,
-            "Share WOS Mode": str(share_wos_mode),
-            "Run Seed": run_seed,
-        }
-    )
-
     means_sorted = np.sort(means)
     n_means = means_sorted.size
     cdf_rows = [
@@ -512,6 +481,37 @@ def run_nb_tab() -> None:
     ]
     st.markdown("**Summary by mean bins**")
     st.dataframe(bin_rows_fmt, use_container_width=True)
+
+    st.write(
+        {
+            "Stores": int(stores),
+            "Mean Generation": "Pareto",
+            "Pareto alpha": float(pareto_alpha),
+            "Mean range clip": [float(mean_min), float(mean_max)],
+            "Planning VMR": "1 + 0.1 * mean",
+            "Realized VMR": "1 + coeff * mean",
+            "Realized Coeff Rule": f"max(0, 0.1 + {float(coef_error_abs):.3f}*u), u~U(-1,1)",
+            "Realized Coeff Range": [
+                round(float(coeff_realized.min()), 4),
+                round(float(coeff_realized.max()), 4),
+            ],
+            "Total Expected Demand": round(total_mean, 3),
+            "Total Allocation": total_units,
+            "Minimum Allocation/Store": 1,
+            "Share WOS Mode": str(share_wos_mode),
+            "Run Seed": run_seed,
+        }
+    )
+
+    st.markdown("**Sold Gain Significance (paired by day)**")
+    st.write(
+        {
+            "Mean daily sold gain": round(sig["mean_diff"], 6),
+            "95% CI": [round(sig["ci_low"], 6), round(sig["ci_high"], 6)],
+            "p-value": round(sig["p_value"], 10),
+            "Significant at 5%": bool(sig["significant"]),
+        }
+    )
 
 
 tab_readme, tab_nb = st.tabs(["README", "Negative Binomial (100 stores)"])
