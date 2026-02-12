@@ -383,21 +383,6 @@ def run_nb_tab() -> None:
     sold_vol_daily = np.minimum(eval_demands, alloc_vol).sum(axis=1)
     sig = paired_significance_from_daily_sold(sold_mean_daily, sold_vol_daily)
 
-    means_sorted = np.sort(means)
-    n_means = means_sorted.size
-    cdf_rows = [
-        {
-            "store_mean": float(m),
-            "cdf": float((i + 1) / n_means),
-            "cdf_pct": float(100.0 * (i + 1) / n_means),
-        }
-        for i, m in enumerate(means_sorted)
-    ]
-    st.markdown("**Store Mean CDF**")
-    st.caption("x: store mean, y: cumulative share of stores with mean <= x")
-    cdf_df = pd.DataFrame(cdf_rows)
-    st.line_chart(cdf_df, x="store_mean", y="cdf_pct", use_container_width=True)
-
     policy_rows = [
         {
             "Policy": "Mean-share",
@@ -481,6 +466,21 @@ def run_nb_tab() -> None:
     ]
     st.markdown("**Summary by mean bins**")
     st.dataframe(bin_rows_fmt, use_container_width=True)
+
+    means_sorted = np.sort(means)
+    n_means = means_sorted.size
+    cdf_rows = [
+        {
+            "store_mean": float(m),
+            "cdf": float((i + 1) / n_means),
+            "cdf_pct": float(100.0 * (i + 1) / n_means),
+        }
+        for i, m in enumerate(means_sorted)
+    ]
+    st.markdown("**Store Mean CDF**")
+    st.caption("x: store mean, y: cumulative share of stores with mean <= x")
+    cdf_df = pd.DataFrame(cdf_rows)
+    st.line_chart(cdf_df, x="store_mean", y="cdf_pct", use_container_width=True)
 
     st.write(
         {
