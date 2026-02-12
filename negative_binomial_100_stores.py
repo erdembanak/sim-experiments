@@ -2,7 +2,7 @@
 """100-store allocation simulation under Negative Binomial demand.
 
 Demand generation:
-- store means from bimodal profile (low segment + high segment)
+- store means from a Pareto profile
 - VMR_i = 1 + coeff * mean_i
 
 Policies compared:
@@ -92,29 +92,20 @@ def proportional_integer_allocation(
 def generate_store_means(
     n_stores: int,
     seed: int,
-    low_share: float = 0.5,
-    low_min: float = 0.0,
-    low_max: float = 1.0,
-    high_min: float = 40.0,
-    high_max: float = 50.0,
+    pareto_alpha: float = 1.5,
+    mean_min: float = 0.5,
+    mean_max: float = 50.0,
 ) -> np.ndarray:
     rng = np.random.default_rng(seed)
-    if not (0.0 <= low_share <= 1.0):
-        raise ValueError("low_share must be in [0, 1].")
-    if low_max <= low_min:
-        raise ValueError("low_max must be > low_min.")
-    if high_max <= high_min:
-        raise ValueError("high_max must be > high_min.")
+    if pareto_alpha <= 0:
+        raise ValueError("pareto_alpha must be > 0.")
+    if mean_min <= 0:
+        raise ValueError("mean_min must be > 0.")
+    if mean_max <= mean_min:
+        raise ValueError("mean_max must be > mean_min.")
 
-    low_count = int(round(n_stores * low_share))
-    low_count = min(max(low_count, 0), n_stores)
-    high_count = n_stores - low_count
-
-    low_vals = rng.uniform(low_min, low_max, size=low_count)
-    high_vals = rng.uniform(high_min, high_max, size=high_count)
-    means = np.concatenate([low_vals, high_vals])
-    rng.shuffle(means)
-    return means
+    means = mean_min * (1.0 + rng.pareto(pareto_alpha, size=n_stores))
+    return np.clip(means, mean_min, mean_max)
 
 
 def build_vmr(means: np.ndarray, coeff: np.ndarray) -> np.ndarray:
@@ -312,15 +303,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--stores", type=int, default=100)
     parser.add_argument(
-        "--low-share",
+        "--pareto-alpha",
         type=float,
-        default=0.5,
-        help="Share of stores in low-mean segment for bimodal profile.",
+        default=1.5,
+        help="Pareto alpha shape for store mean generation (smaller = heavier tail).",
     )
-    parser.add_argument("--low-min", type=float, default=0.0)
-    parser.add_argument("--low-max", type=float, default=1.0)
-    parser.add_argument("--high-min", type=float, default=40.0)
-    parser.add_argument("--high-max", type=float, default=50.0)
+    parser.add_argument("--mean-min", type=float, default=0.5)
+    parser.add_argument("--mean-max", type=float, default=50.0)
     parser.add_argument(
         "--total-factor",
         type=float,
@@ -362,11 +351,9 @@ def main() -> None:
     means = generate_store_means(
         n_stores=args.stores,
         seed=args.seed,
-        low_share=args.low_share,
-        low_min=args.low_min,
-        low_max=args.low_max,
-        high_min=args.high_min,
-        high_max=args.high_max,
+        pareto_alpha=args.pareto_alpha,
+        mean_min=args.mean_min,
+        mean_max=args.mean_max,
     )
     coeff_plan = np.full(args.stores, 0.1, dtype=float)
     coeff_realized = sample_realized_coeff(
@@ -419,12 +406,9 @@ def main() -> None:
     print("Negative Binomial Allocation Test (100 Stores)")
     print("=" * 88)
     print(f"Stores:                   {args.stores}")
-    low_count = int(round(args.stores * args.low_share))
-    high_count = args.stores - low_count
     print(
-        "Bimodal segments:         "
-        f"low={low_count} in [{args.low_min}, {args.low_max}], "
-        f"high={high_count} in [{args.high_min}, {args.high_max}]"
+        "Mean generation:          "
+        f"Pareto(alpha={args.pareto_alpha}) clipped to [{args.mean_min}, {args.mean_max}]"
     )
     print("Planning VMR rule:        1 + 0.1 * mean")
     print("Realized VMR rule:        1 + coeff * mean")

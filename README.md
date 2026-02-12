@@ -25,9 +25,9 @@ This project compares allocation policies under uncertain demand.
 
 ### Negative Binomial (100 stores)
 
-- Mean generation is parameterized:
-  - `bimodal`: low segment + high segment, each uniform with configurable ranges and share
-    (default low `[0,1]`, high `[40,50]`, share `0.5`)
+- Mean generation uses Pareto:
+  - `mean_i = mean_min * (1 + Pareto(alpha))`, clipped to `[mean_min, mean_max]`
+  - smaller `alpha` gives a heavier tail (more extreme high-mean stores)
 - Planning: `VMR_i = 1 + 0.1 * mean_i` (no error).
 - Realized demand: `coeff_i = max(0, 0.1 + error_abs * u_i)`, where `u_i ~ Uniform(-1, 1)`, and `VMR_i = 1 + coeff_i * mean_i`.
 - If `VMR = 1`, demand uses Poisson limit.

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 from negative_binomial_100_stores import (
@@ -27,7 +28,7 @@ st.set_page_config(page_title="Allocation Probability Test", layout="wide")
 
 st.title("Allocation Probability Test")
 st.caption(
-    "Tab 1: 2-store normal demand. "
+    "Tab 1: README. "
     "Tab 2: 100-store Negative Binomial demand with VMR rule."
 )
 
@@ -265,14 +266,22 @@ def run_nb_tab() -> None:
     st.markdown("**Core Inputs**")
     c1, c2, c3 = st.columns(3)
     stores = c1.number_input("Stores", min_value=1, value=100, step=1)
-    low_share = c2.number_input("Low-share", min_value=0.0, max_value=1.0, value=0.90, step=0.05)
+    pareto_alpha = c2.number_input(
+        "Pareto alpha",
+        min_value=0.1,
+        value=1.15,
+        step=0.1,
+        help=(
+            "Controls tail heaviness of store means. "
+            "Decrease alpha for a heavier tail (more extreme high-mean stores, more concentration). "
+            "Increase alpha for a lighter tail (means become more similar, less concentration)."
+        ),
+    )
     total_factor = c3.number_input("Total factor", min_value=0.1, value=2.1, step=0.05)
 
-    r1, r2, r3, r4 = st.columns(4)
-    low_min = r1.number_input("Low min", min_value=0.0, value=0.0, step=0.1)
-    low_max = r2.number_input("Low max", min_value=0.1, value=1.0, step=0.1)
-    high_min = r3.number_input("High min", min_value=0.0, value=40.0, step=0.5)
-    high_max = r4.number_input("High max", min_value=0.1, value=50.0, step=0.5)
+    r1, r2 = st.columns(2)
+    mean_min = r1.number_input("Mean min", min_value=0.1, value=0.5, step=0.1)
+    mean_max = r2.number_input("Mean max", min_value=0.2, value=50.0, step=0.5)
     c4, c5 = st.columns(2)
     share_wos_mode = c4.selectbox(
         "Share WOS mode",
@@ -305,21 +314,16 @@ def run_nb_tab() -> None:
         st.info("Set parameters and click 'Run NB Simulation'.")
         return
 
-    if low_max <= low_min:
-        st.error("`low_max` must be greater than `low_min`.")
-        return
-    if high_max <= high_min:
-        st.error("`high_max` must be greater than `high_min`.")
+    if mean_max <= mean_min:
+        st.error("`mean_max` must be greater than `mean_min`.")
         return
 
     means = generate_store_means(
         n_stores=int(stores),
         seed=int(seed),
-        low_share=float(low_share),
-        low_min=float(low_min),
-        low_max=float(low_max),
-        high_min=float(high_min),
-        high_max=float(high_max),
+        pareto_alpha=float(pareto_alpha),
+        mean_min=float(mean_min),
+        mean_max=float(mean_max),
     )
     run_seed = int(seed)
     coeff_plan = np.full(int(stores), 0.1, dtype=float)
@@ -392,11 +396,9 @@ def run_nb_tab() -> None:
     st.write(
         {
             "Stores": int(stores),
-            "Bimodal Low Segment": {
-                "Share": float(low_share),
-                "Range": [float(low_min), float(low_max)],
-            },
-            "Bimodal High Segment": {"Range": [float(high_min), float(high_max)]},
+            "Mean Generation": "Pareto",
+            "Pareto alpha": float(pareto_alpha),
+            "Mean range clip": [float(mean_min), float(mean_max)],
             "Planning VMR": "1 + 0.1 * mean",
             "Realized VMR": "1 + coeff * mean",
             "Realized Coeff Rule": f"max(0, 0.1 + {float(coef_error_abs):.3f}*u), u~U(-1,1)",
@@ -412,6 +414,21 @@ def run_nb_tab() -> None:
         }
     )
 
+    means_sorted = np.sort(means)
+    n_means = means_sorted.size
+    cdf_rows = [
+        {
+            "store_mean": float(m),
+            "cdf": float((i + 1) / n_means),
+            "cdf_pct": float(100.0 * (i + 1) / n_means),
+        }
+        for i, m in enumerate(means_sorted)
+    ]
+    st.markdown("**Store Mean CDF**")
+    st.caption("x: store mean, y: cumulative share of stores with mean <= x")
+    cdf_df = pd.DataFrame(cdf_rows)
+    st.line_chart(cdf_df, x="store_mean", y="cdf_pct", use_container_width=True)
+
     policy_rows = [
         {
             "Policy": "Mean-share",
@@ -419,7 +436,6 @@ def run_nb_tab() -> None:
             "Avg Lost": round(metrics_mean.avg_lost, 3),
             "Avg Left": round(metrics_mean.avg_leftover, 3),
             "Fill Rate %": round(100 * metrics_mean.fill_rate, 3),
-            "Stockout Any %": round(100 * metrics_mean.stockout_any, 3),
         },
         {
             "Policy": "Volatility-aware",
@@ -427,7 +443,6 @@ def run_nb_tab() -> None:
             "Avg Lost": round(metrics_vol.avg_lost, 3),
             "Avg Left": round(metrics_vol.avg_leftover, 3),
             "Fill Rate %": round(100 * metrics_vol.fill_rate, 3),
-            "Stockout Any %": round(100 * metrics_vol.stockout_any, 3),
         },
     ]
     st.dataframe(policy_rows, use_container_width=True)
@@ -454,7 +469,8 @@ def run_nb_tab() -> None:
     st.markdown("**Top 10 stores by allocation difference**")
     st.dataframe(top_rows, use_container_width=True)
 
-    low_group_idx = np.where(means <= float(low_max))[0]
+    low_group_cutoff = float(np.quantile(means, 0.2))
+    low_group_idx = np.where(means <= low_group_cutoff)[0]
     if low_group_idx.size > 0:
         low_sorted = low_group_idx[np.argsort(np.abs(diffs[low_group_idx]))[::-1][:10]]
         low_rows = [
@@ -470,7 +486,7 @@ def run_nb_tab() -> None:
             }
             for i in low_sorted
         ]
-        st.markdown("**Top 10 low-group stores by allocation difference**")
+        st.markdown("**Top 10 lower-mean stores by allocation difference (bottom 20%)**")
         st.dataframe(low_rows, use_container_width=True)
 
     bin_rows = summarize_by_mean_bins(
@@ -498,9 +514,7 @@ def run_nb_tab() -> None:
     st.dataframe(bin_rows_fmt, use_container_width=True)
 
 
-tab_readme, tab_normal, tab_nb = st.tabs(
-    ["README", "Normal (2-store)", "Negative Binomial (100 stores)"]
-)
+tab_readme, tab_nb = st.tabs(["README", "Negative Binomial (100 stores)"])
 
 with tab_readme:
     readme_path = Path(__file__).with_name("README.md")
@@ -508,9 +522,6 @@ with tab_readme:
         st.markdown(readme_path.read_text(encoding="utf-8"))
     else:
         st.warning("README.md not found.")
-
-with tab_normal:
-    run_normal_tab()
 
 with tab_nb:
     run_nb_tab()
