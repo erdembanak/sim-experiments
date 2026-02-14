@@ -260,7 +260,8 @@ def run_normal_tab() -> None:
 def run_nb_tab() -> None:
     st.subheader("100-Store Negative Binomial")
     st.caption(
-        "Planning uses fixed coeff=0.1. Realized uses coeff = max(0, 0.1 + error_abs*u), u~U(-1,1)."
+        "Planning uses fixed coeff=0.1. Realized can shift means via a bias multiplier and uses "
+        "coeff = max(0, 0.1 + error_abs*u), u~U(-1,1)."
     )
 
     st.markdown("**Core Inputs**")
@@ -282,7 +283,7 @@ def run_nb_tab() -> None:
     r1, r2 = st.columns(2)
     mean_min = r1.number_input("Mean min", min_value=0.1, value=0.5, step=0.1)
     mean_max = r2.number_input("Mean max", min_value=0.2, value=50.0, step=0.5)
-    c4, c5 = st.columns(2)
+    c4, c5, c6 = st.columns(3)
     share_wos_mode = c4.selectbox(
         "Share WOS mode",
         options=["after", "before"],
@@ -295,6 +296,18 @@ def run_nb_tab() -> None:
         value=0.0,
         step=0.05,
         format="%.3f",
+    )
+    realized_demand_bias = c6.number_input(
+        "Realized demand bias (multiplier)",
+        min_value=0.01,
+        max_value=5.0,
+        value=1.0,
+        step=0.05,
+        format="%.3f",
+        help=(
+            "Multiplier on realized means only. 1.0 = no bias, 1.1 = +10% demand, "
+            "0.8 = -20% demand."
+        ),
     )
 
     with st.expander("Advanced", expanded=False):
@@ -332,10 +345,12 @@ def run_nb_tab() -> None:
         seed=run_seed + 1,
         coef_error_abs=float(coef_error_abs),
     )
+    realized_means = means * float(realized_demand_bias)
     vmr_plan = build_vmr(means, coeff_plan)
-    vmr_realized = build_vmr(means, coeff_realized)
+    vmr_realized = build_vmr(realized_means, coeff_realized)
 
     total_mean = float(means.sum())
+    total_realized_mean = float(realized_means.sum())
     total_units = int(round(total_mean * float(total_factor)))
     if total_units < int(stores):
         st.error(
@@ -359,7 +374,7 @@ def run_nb_tab() -> None:
     )
 
     eval_demands = sample_nb_demands(
-        means=means,
+        means=realized_means,
         vmr=vmr_realized,
         trials=int(eval_trials),
         seed=run_seed + 200,
@@ -410,7 +425,8 @@ def run_nb_tab() -> None:
     top_rows = [
         {
             "Store": int(i),
-            "Mean": round(float(means[i]), 4),
+            "Planned Mean": round(float(means[i]), 4),
+            "Realized Mean": round(float(realized_means[i]), 4),
             "Realized Demand": round(float(realized_demand_store[i]), 4),
             "Realized Coeff": round(float(coeff_realized[i]), 4),
             "Realized VMR": round(float(vmr_realized[i]), 4),
@@ -430,7 +446,8 @@ def run_nb_tab() -> None:
         low_rows = [
             {
                 "Store": int(i),
-                "Mean": round(float(means[i]), 4),
+                "Planned Mean": round(float(means[i]), 4),
+                "Realized Mean": round(float(realized_means[i]), 4),
                 "Realized Demand": round(float(realized_demand_store[i]), 4),
                 "Realized Coeff": round(float(coeff_realized[i]), 4),
                 "Realized VMR": round(float(vmr_realized[i]), 4),
@@ -490,12 +507,15 @@ def run_nb_tab() -> None:
             "Mean range clip": [float(mean_min), float(mean_max)],
             "Planning VMR": "1 + 0.1 * mean",
             "Realized VMR": "1 + coeff * mean",
+            "Realized Mean Bias Multiplier": round(float(realized_demand_bias), 6),
+            "Realized Mean Shift %": round(100.0 * (float(realized_demand_bias) - 1.0), 4),
             "Realized Coeff Rule": f"max(0, 0.1 + {float(coef_error_abs):.3f}*u), u~U(-1,1)",
             "Realized Coeff Range": [
                 round(float(coeff_realized.min()), 4),
                 round(float(coeff_realized.max()), 4),
             ],
             "Total Expected Demand": round(total_mean, 3),
+            "Total Realized Expected Demand": round(total_realized_mean, 3),
             "Total Allocation": total_units,
             "Minimum Allocation/Store": 1,
             "Share WOS Mode": str(share_wos_mode),

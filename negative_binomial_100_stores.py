@@ -340,6 +340,16 @@ def parse_args() -> argparse.Namespace:
             "u~Uniform(-1,1)."
         ),
     )
+    parser.add_argument(
+        "--realized-demand-bias",
+        type=float,
+        default=1.0,
+        help=(
+            "Multiplier applied to realized means only: "
+            "realized_mean = mean * bias. "
+            "Example: 1.00 => no bias, 1.10 => +10%%, 0.80 => -20%%."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -347,6 +357,8 @@ def main() -> None:
     args = parse_args()
     if args.coef_error_abs < 0:
         raise ValueError("--coef-error-abs must be >= 0.")
+    if args.realized_demand_bias <= 0.0:
+        raise ValueError("--realized-demand-bias must be > 0.")
 
     means = generate_store_means(
         n_stores=args.stores,
@@ -361,10 +373,12 @@ def main() -> None:
         seed=args.seed + 1,
         coef_error_abs=args.coef_error_abs,
     )
+    realized_means = means * args.realized_demand_bias
     vmr_plan = build_vmr(means, coeff_plan)
-    vmr_realized = build_vmr(means, coeff_realized)
+    vmr_realized = build_vmr(realized_means, coeff_realized)
 
     total_mean = float(means.sum())
+    total_realized_mean = float(realized_means.sum())
     total_units = int(round(total_mean * args.total_factor))
 
     alloc_mean = proportional_integer_allocation(
@@ -383,7 +397,7 @@ def main() -> None:
     )
 
     eval_demands = sample_nb_demands(
-        means=means,
+        means=realized_means,
         vmr=vmr_realized,
         trials=args.eval_trials,
         seed=args.seed + 200,
@@ -413,6 +427,13 @@ def main() -> None:
     print("Planning VMR rule:        1 + 0.1 * mean")
     print("Realized VMR rule:        1 + coeff * mean")
     print(
+        f"Realized demand shift:    {(args.realized_demand_bias - 1.0) * 100.0:+.2f}%"
+    )
+    print(
+        f"Realized demand bias:     x{args.realized_demand_bias:.4f} "
+        "(multiplier on means at evaluation)"
+    )
+    print(
         "Realized coeff rule:      "
         f"coeff = max(0, 0.1 + {args.coef_error_abs}*u), u~U(-1,1)"
     )
@@ -421,6 +442,7 @@ def main() -> None:
         f"[{coeff_realized.min():.3f}, {coeff_realized.max():.3f}]"
     )
     print(f"Total expected demand:    {total_mean:.2f}")
+    print(f"Realized expected demand: {total_realized_mean:.2f}")
     print(f"Total allocation budget:  {total_units}")
     print("Minimum allocation/store: 1")
     if args.mean_share_max_wos > 0:
