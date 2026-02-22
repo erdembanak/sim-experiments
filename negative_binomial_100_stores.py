@@ -95,6 +95,7 @@ def generate_store_means(
     pareto_alpha: float = 1.5,
     mean_min: float = 0.5,
     mean_max: float = 50.0,
+    target_store_mean: float | None = None,
 ) -> np.ndarray:
     rng = np.random.default_rng(seed)
     if pareto_alpha <= 0:
@@ -105,7 +106,14 @@ def generate_store_means(
         raise ValueError("mean_max must be > mean_min.")
 
     means = mean_min * (1.0 + rng.pareto(pareto_alpha, size=n_stores))
-    return np.clip(means, mean_min, mean_max)
+    means = np.clip(means, mean_min, mean_max)
+
+    if target_store_mean is not None and target_store_mean > 0:
+        current_mean = float(means.mean())
+        if current_mean > 0:
+            means = means * (target_store_mean / current_mean)
+
+    return means
 
 
 def build_vmr(means: np.ndarray, coeff: np.ndarray) -> np.ndarray:
@@ -311,6 +319,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mean-min", type=float, default=0.5)
     parser.add_argument("--mean-max", type=float, default=50.0)
     parser.add_argument(
+        "--target-store-mean",
+        type=float,
+        default=0.0,
+        help="Target average store mean (<=0 disables; Pareto shape preserved, means rescaled).",
+    )
+    parser.add_argument(
         "--total-factor",
         type=float,
         default=0.9,
@@ -366,6 +380,7 @@ def main() -> None:
         pareto_alpha=args.pareto_alpha,
         mean_min=args.mean_min,
         mean_max=args.mean_max,
+        target_store_mean=(args.target_store_mean if args.target_store_mean > 0 else None),
     )
     coeff_plan = np.full(args.stores, 0.1, dtype=float)
     coeff_realized = sample_realized_coeff(

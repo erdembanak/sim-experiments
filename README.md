@@ -1,77 +1,61 @@
 # Allocation Probability Test
 
-This project compares allocation policies under uncertain demand.
-
-## What is included
-
-- `probability_test.py`: 2-store simulation with **normal** demand.
-- `negative_binomial_100_stores.py`: 100-store simulation with **negative binomial** demand.
-- `streamlit_app.py`: interactive app with 3 tabs:
-  - `README`
-  - `Normal (2-store)`
-  - `Negative Binomial (100 stores)`
+Compares inventory allocation policies under uncertain demand using a 100-store Negative Binomial simulation.
 
 ## Policies compared
 
-- **Mean-share**: allocate proportional to expected means.
-- **Volatility-aware**: optimize allocation using model-based marginal expected sell.
+| Policy | How it allocates |
+|---|---|
+| **Mean-share** | Proportional to forecast means via WOS-balancing. Each unit goes to the store with the lowest alloc/mean ratio. |
+| **Volatility-aware** | Greedy by marginal expected sales. Each unit goes to the store where P(demand >= alloc+1) is highest, using exact NB tail probabilities. |
 
-## Demand assumptions
+## Demand model
 
-### Normal (2-store)
+**Store means** are drawn from a Pareto distribution:
 
-- Store demand sampled from normal distribution.
-- Rounded to non-negative integers.
+    mean_i = mean_min * (1 + Pareto(alpha)),  clipped to [mean_min, mean_max]
 
-### Negative Binomial (100 stores)
+Smaller alpha = heavier tail = more extreme high-mean stores.
 
-- Mean generation uses Pareto:
-  - `mean_i = mean_min * (1 + Pareto(alpha))`, clipped to `[mean_min, mean_max]`
-  - smaller `alpha` gives a heavier tail (more extreme high-mean stores)
-- Planning: `VMR_i = 1 + 0.1 * mean_i` (no error).
-- Realized mean bias (optional multiplier): `realized_mean_i = mean_i * bias_multiplier`.
-  - `bias_multiplier = 1.0` means no bias
-  - `bias_multiplier = 1.1` means +10% realized mean
-  - `bias_multiplier = 0.8` means -20% realized mean
-- Realized demand: `coeff_i = max(0, 0.1 + error_abs * u_i)`, where `u_i ~ Uniform(-1, 1)`, and `VMR_i = 1 + coeff_i * realized_mean_i`.
-- If `VMR = 1`, demand uses Poisson limit.
-- Allocation constraint: each store gets at least `1` unit.
-- Optional mean-share control: `mean_share_max_wos` (soft cap on `alloc/mean` in mean-share allocation).
-- Mean-share WOS mode: choose `after` (`(alloc+1)/mean`) or `before` (`alloc/mean`) when selecting the next unit.
+**Target store mean** (optional): when set, all means are rescaled so their average equals this value while preserving the Pareto shape.
 
-## Statistical significance of sold gain
+**Variance-to-mean ratio (VMR):**
 
-Both tabs report significance for sold gain using a **paired daily test**:
+    VMR_i = 1 + coeff_i * mean_i
 
-- Daily difference: `d_t = sold_vol_t - sold_mean_t`.
-- Reported values:
-  - mean daily gain
-  - 95% confidence interval
-  - two-sided p-value (normal approximation)
-  - whether significant at 5%
+- Planning uses a fixed coeff = 0.1 for all stores.
+- Realized coeff per store: `max(0, 0.1 + error_abs * u_i)` where `u_i ~ U(-1, 1)`.
+- When VMR = 1, demand falls back to Poisson.
 
-Interpretation:
+**Realized demand bias** (optional): `realized_mean_i = mean_i * bias_multiplier`
+- 1.0 = no bias, 1.1 = +10% demand, 0.8 = -20% demand.
 
-- If 95% CI excludes `0`, sold gain is statistically significant at ~5%.
+**Constraints:** each store receives at least 1 unit.
+
+## Mean-share controls
+
+- **WOS mode**: `before` uses `alloc/mean`, `after` uses `(alloc+1)/mean` when picking the next store.
+- **Max WOS cap** (CLI only): soft cap on `alloc/mean` per store.
+
+## Visualizations
+
+- **Allocation CDF by Policy** — cumulative distribution of units allocated per store, one line per policy (Mean-share vs Volatility-aware).
+- **Store Mean CDF** — cumulative share of stores with mean demand <= x.
+
+## Statistical significance
+
+Sold gain significance is tested via a paired daily test:
+
+- `d_t = sold_vol_t - sold_mean_t` for each simulated day
+- Reports: mean daily gain, 95% CI, two-sided p-value (normal approx)
+- Significant at 5% if the CI excludes 0
 
 ## Run
 
 ```bash
+# Web UI
 .venv/bin/streamlit run streamlit_app.py
+
+# CLI
+.venv/bin/python negative_binomial_100_stores.py --stores 100 --pareto-alpha 1.15 --total-factor 2.1 --target-store-mean 5.0
 ```
-
-## CLI scripts
-
-Normal model:
-
-```bash
-.venv/bin/python probability_test.py
-```
-
-Negative binomial model:
-
-```bash
-.venv/bin/python negative_binomial_100_stores.py
-```
-
-Note: for the negative binomial model, total allocation must be at least number of stores due to the minimum `1` unit/store rule.
