@@ -355,6 +355,8 @@ def run_nb_tab() -> None:
             "Bin": row["bin"],
             "Stores": row["stores"],
             "Avg Mean": round(row["avg_mean"], 4),
+            "Avg Alloc Mean": round(row["alloc_mean_total"] / row["stores"], 2),
+            "Avg Alloc Vol": round(row["alloc_vol_total"] / row["stores"], 2),
             "E[Lost] Mean": round(lost_mean, 4),
             "E[Lost] Vol": round(lost_vol, 4),
             "Lost Rate Mean %": round(lost_rate_mean, 2),
