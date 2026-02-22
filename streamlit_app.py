@@ -250,12 +250,14 @@ def run_nb_tab() -> None:
     vol_alloc_sorted = alloc_vol[order].astype(float)
     mean_alloc_sorted = alloc_mean[order].astype(float)
     sign = np.where(delta > 0, "positive", np.where(delta < 0, "negative", "zero"))
+    sorted_means = means[order].astype(float)
     delta_df = pd.DataFrame({
         "store_index": np.arange(len(delta)),
         "delta": delta,
         "sign": sign,
         "vol_alloc": vol_alloc_sorted,
         "mean_alloc": mean_alloc_sorted,
+        "fc_mean": sorted_means,
     })
     sign_scale = alt.Scale(
         domain=["positive", "negative", "zero"],
@@ -270,6 +272,7 @@ def run_nb_tab() -> None:
             color=alt.Color("sign:N", scale=sign_scale, legend=None),
             tooltip=[
                 alt.Tooltip("store_index:O", title="Store"),
+                alt.Tooltip("fc_mean:Q", title="Fc Mean", format=".2f"),
                 alt.Tooltip("mean_alloc:Q", title="Mean-share", format=".0f"),
                 alt.Tooltip("vol_alloc:Q", title="Vol-aware", format=".0f"),
                 alt.Tooltip("delta:Q", title="\u0394", format=".0f"),
@@ -300,6 +303,7 @@ def run_nb_tab() -> None:
         "sign": lost_sign,
         "lost_baseline": np.round(lost_mean_store, 3),
         "lost_vol": np.round(lost_vol_store, 3),
+        "fc_mean": sorted_means,
     })
     lost_delta_bars = (
         alt.Chart(lost_delta_df)
@@ -310,6 +314,7 @@ def run_nb_tab() -> None:
             color=alt.Color("sign:N", scale=sign_scale, legend=None),
             tooltip=[
                 alt.Tooltip("store_index:O", title="Store"),
+                alt.Tooltip("fc_mean:Q", title="Fc Mean", format=".2f"),
                 alt.Tooltip("lost_baseline:Q", title="Lost (Mean-share)", format=".3f"),
                 alt.Tooltip("lost_vol:Q", title="Lost (Vol-aware)", format=".3f"),
                 alt.Tooltip("lost_delta:Q", title="Reduction", format=".3f"),
@@ -329,49 +334,6 @@ def run_nb_tab() -> None:
     st.caption("Per-store reduction in expected lost sales. Green = vol-aware loses less, red = vol-aware loses more.")
     st.altair_chart(lost_delta_chart, use_container_width=True)
 
-    # ── Summary tables ─────────────────────────────────────────────────────
-    diffs = alloc_vol - alloc_mean
-    idx_sorted = np.argsort(np.abs(diffs))[::-1][:10]
-    top_rows = [
-        {
-            "Store": int(i),
-            "Planned Mean": round(float(means[i]), 4),
-            "Realized Mean": round(float(realized_means[i]), 4),
-            "E[Sold] Mean": round(float(sold_mean_store[i]), 4),
-            "E[Sold] Vol": round(float(sold_vol_store[i]), 4),
-            "Realized Coeff": round(float(coeff_realized[i]), 4),
-            "Realized VMR": round(float(vmr_realized[i]), 4),
-            "Mean Alloc": int(alloc_mean[i]),
-            "Vol Alloc": int(alloc_vol[i]),
-            "Diff": int(diffs[i]),
-        }
-        for i in idx_sorted
-    ]
-    st.markdown("**Top 10 stores by allocation difference**")
-    st.dataframe(top_rows, use_container_width=True)
-
-    low_group_cutoff = float(np.quantile(means, 0.2))
-    low_group_idx = np.where(means <= low_group_cutoff)[0]
-    if low_group_idx.size > 0:
-        low_sorted = low_group_idx[np.argsort(np.abs(diffs[low_group_idx]))[::-1][:10]]
-        low_rows = [
-            {
-                "Store": int(i),
-                "Planned Mean": round(float(means[i]), 4),
-                "Realized Mean": round(float(realized_means[i]), 4),
-                "E[Sold] Mean": round(float(sold_mean_store[i]), 4),
-                "E[Sold] Vol": round(float(sold_vol_store[i]), 4),
-                "Realized Coeff": round(float(coeff_realized[i]), 4),
-                "Realized VMR": round(float(vmr_realized[i]), 4),
-                "Mean Alloc": int(alloc_mean[i]),
-                "Vol Alloc": int(alloc_vol[i]),
-                "Diff": int(diffs[i]),
-            }
-            for i in low_sorted
-        ]
-        st.markdown("**Top 10 lower-mean stores by allocation difference (bottom 20%)**")
-        st.dataframe(low_rows, use_container_width=True)
-
     bin_rows = summarize_by_mean_bins(
         means=means,
         realized_demand=realized_means,
@@ -380,19 +342,25 @@ def run_nb_tab() -> None:
         sold_mean_store=sold_mean_store,
         sold_vol_store=sold_vol_store,
     )
-    bin_rows_fmt = [
-        {
+    bin_rows_fmt = []
+    for row in bin_rows:
+        demand_total = row["avg_realized_demand"] * row["stores"]
+        lost_mean = demand_total - row["sold_mean_total"]
+        lost_vol = demand_total - row["sold_vol_total"]
+        lost_reduction = lost_mean - lost_vol
+        lost_reduction_pct = 100.0 * lost_reduction / lost_mean if lost_mean > 0 else 0.0
+        lost_rate_mean = 100.0 * lost_mean / demand_total if demand_total > 0 else 0.0
+        lost_rate_vol = 100.0 * lost_vol / demand_total if demand_total > 0 else 0.0
+        bin_rows_fmt.append({
             "Bin": row["bin"],
             "Stores": row["stores"],
             "Avg Mean": round(row["avg_mean"], 4),
-            "Avg Realized Mean": round(row["avg_realized_demand"], 4),
-            "Mean Alloc Total": row["alloc_mean_total"],
-            "Vol Alloc Total": row["alloc_vol_total"],
-            "Sold Gain": round(row["sold_gain"], 4),
-            "Sold Gain %": round(row["sold_gain_pct"], 4),
-        }
-        for row in bin_rows
-    ]
+            "E[Lost] Mean": round(lost_mean, 4),
+            "E[Lost] Vol": round(lost_vol, 4),
+            "Lost Rate Mean %": round(lost_rate_mean, 2),
+            "Lost Rate Vol %": round(lost_rate_vol, 2),
+            "Rate Diff (pp)": round(lost_rate_mean - lost_rate_vol, 2),
+        })
     st.markdown("**Summary by mean bins**")
     st.dataframe(bin_rows_fmt, use_container_width=True)
 
@@ -477,15 +445,8 @@ def run_nb_tab() -> None:
             "Pareto alpha": float(pareto_alpha),
             "Mean range clip": [float(mean_min), float(mean_max)],
             "Planning VMR": f"1 + {float(vmr_coeff):.3f} * mean",
-            "Realized VMR": "1 + coeff * mean",
             "D / F (demand / forecast)": round(float(realized_demand_bias), 6),
-            "Realized Coeff Rule": f"max(0, {float(vmr_coeff):.3f} + {float(coef_error_abs):.3f}*u), u~U(-1,1)",
-            "Realized Coeff Range": [
-                round(float(coeff_realized.min()), 4),
-                round(float(coeff_realized.max()), 4),
-            ],
             "Total Planned Demand": round(total_mean, 3),
-            "Total Realized Demand": round(total_realized_mean, 3),
             "Total Allocation": total_units,
             "Minimum Allocation/Store": 1,
             "Share WOS Mode": str(share_wos_mode),
