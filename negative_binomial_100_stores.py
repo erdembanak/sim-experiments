@@ -222,6 +222,22 @@ def optimize_volatility_aware(
     return alloc
 
 
+def match_rate(demand: np.ndarray, alloc: np.ndarray) -> float:
+    """Macy's-style match rate: 1 - (sum |ideal - alloc|) / total_receipt * 0.5.
+
+    `ideal_i = round(total_receipt * demand_i / sum(demand))` is the
+    proportional-by-demand allocation given the same total budget.
+    Returns NaN if total_receipt or total_demand is non-positive.
+    """
+    total_receipt = float(alloc.sum())
+    total_demand = float(demand.sum())
+    if total_receipt <= 0 or total_demand <= 0:
+        return float("nan")
+    ideal = np.round(total_receipt * demand / total_demand)
+    abs_err = float(np.abs(ideal - alloc).sum())
+    return 1.0 - (abs_err / total_receipt) * 0.5
+
+
 def evaluate(demands: np.ndarray, alloc: np.ndarray) -> Metrics:
     sold_by_store = np.minimum(demands, alloc)
     sold_per_day = sold_by_store.sum(axis=1)
@@ -420,6 +436,8 @@ def main() -> None:
 
     metrics_mean = evaluate(eval_demands, alloc_mean)
     metrics_vol = evaluate(eval_demands, alloc_vol)
+    match_rate_mean = match_rate(means, alloc_mean)
+    match_rate_vol = match_rate(means, alloc_vol)
     sold_mean_daily = np.minimum(eval_demands, alloc_mean).sum(axis=1)
     sold_vol_daily = np.minimum(eval_demands, alloc_vol).sum(axis=1)
     realized_demand_store = eval_demands.mean(axis=0)
@@ -470,18 +488,18 @@ def main() -> None:
 
     print(
         f"{'Policy':<28}{'Avg Sold':>12}{'Avg Lost':>12}"
-        f"{'Avg Left':>12}{'Fill Rate':>12}{'Stockout Any':>14}"
+        f"{'Avg Left':>12}{'Fill Rate':>12}{'Stockout Any':>14}{'Match Rate':>12}"
     )
-    print("-" * 88)
+    print("-" * 100)
     print(
         f"{'Mean-share':<28}{metrics_mean.avg_sold:>12.2f}{metrics_mean.avg_lost:>12.2f}"
         f"{metrics_mean.avg_leftover:>12.2f}{100*metrics_mean.fill_rate:>11.2f}%"
-        f"{100*metrics_mean.stockout_any:>13.2f}%"
+        f"{100*metrics_mean.stockout_any:>13.2f}%{match_rate_mean:>12.4f}"
     )
     print(
         f"{'Volatility-aware':<28}{metrics_vol.avg_sold:>12.2f}{metrics_vol.avg_lost:>12.2f}"
         f"{metrics_vol.avg_leftover:>12.2f}{100*metrics_vol.fill_rate:>11.2f}%"
-        f"{100*metrics_vol.stockout_any:>13.2f}%"
+        f"{100*metrics_vol.stockout_any:>13.2f}%{match_rate_vol:>12.4f}"
     )
 
     print("\nComparison")

@@ -14,6 +14,7 @@ import streamlit as st
 from negative_binomial_100_stores import (
     build_vmr,
     generate_store_means,
+    match_rate,
     optimize_volatility_aware,
     proportional_integer_allocation,
     summarize_by_mean_bins,
@@ -228,18 +229,22 @@ def run_nb_tab() -> None:
 
     lost_rate_mean = 100.0 * (1.0 - fill_rate_mean)
     lost_rate_vol = 100.0 * (1.0 - fill_rate_vol)
+    match_rate_mean = match_rate(means, alloc_mean)
+    match_rate_vol = match_rate(means, alloc_vol)
     policy_rows = [
         {
             "Policy": "Mean-share",
             "E[Sold]": round(total_sold_mean, 3),
             "E[Lost]": round(total_lost_mean, 3),
             "Lost Rate %": round(lost_rate_mean, 3),
+            "Match Rate": round(match_rate_mean, 4),
         },
         {
             "Policy": "Volatility-aware",
             "E[Sold]": round(total_sold_vol, 3),
             "E[Lost]": round(total_lost_vol, 3),
             "Lost Rate %": round(lost_rate_vol, 3),
+            "Match Rate": round(match_rate_vol, 4),
         },
     ]
     st.dataframe(policy_rows, use_container_width=True)
